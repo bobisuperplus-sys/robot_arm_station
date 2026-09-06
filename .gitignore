@@ -1,0 +1,33 @@
+# Qt / C++ 构建产物与 IDE 配置
+build/
+bin/
+*.user
+*.user.*
+*.autosave
+.qtcreator/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.o
+*.a
+*.so
+*.dylib
+
+# Python 运行时与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# 临时与备份文件
+*.swp
+*.bak
+*~
+*.log
+.DS_Store
+.vscode/
+.idea/
