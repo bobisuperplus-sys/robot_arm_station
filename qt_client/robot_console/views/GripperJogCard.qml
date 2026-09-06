@@ -19,10 +19,10 @@ CyberCard {
         Layout.fillWidth: true
         spacing: 8
 
-        // 夹爪开度与力矩指示槽
+        // 夹爪交互控制与力矩指示面板
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 52
+            implicitHeight: 88
             color: Theme.surfaceContainerLowest
             radius: Theme.radiusSm
             border.color: Theme.border
@@ -30,44 +30,156 @@ CyberCard {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 6
-                spacing: 2
+                anchors.margins: 8
+                spacing: 6
 
+                // 读数信息行
                 RowLayout {
                     Layout.fillWidth: true
                     Text {
-                        text: "夹爪状态: " + ((root.robotRpc && root.robotRpc.gripperWidth < 45) ? "夹紧闭合 [42 N]" : "完全张开")
+                        text: "夹爪状态: " + ((root.robotRpc && root.robotRpc.gripperWidth < 15) ? "夹紧闭合" : ((root.robotRpc && root.robotRpc.gripperWidth > 70) ? "完全张开" : "自由行程"))
                         color: Theme.tertiary
                         font.family: Theme.fontTitle; font.pixelSize: 10; font.bold: true
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: "开度: " + (root.robotRpc ? root.robotRpc.gripperWidth.toFixed(1) : "38.2") + " mm"
+                        text: "开度: " + (root.robotRpc ? root.robotRpc.gripperWidth.toFixed(1) : "0.0") + " mm | 阻抗力: " + (root.robotRpc ? Math.abs(root.robotRpc.gripperForce).toFixed(1) : "0.0") + " N"
                         color: Theme.primary
                         font.family: Theme.fontMono; font.pixelSize: 10; font.bold: true
                     }
                 }
 
-                // 开度滑槽
+                // 交互式开度调节滑槽 (支持点击与水平拖动)
                 Rectangle {
+                    id: sliderTrack
                     Layout.fillWidth: true
-                    height: 6
-                    radius: 3
+                    height: 10
+                    radius: 5
                     color: Theme.surfaceContainer
+                    border.color: Theme.border; border.width: 1
 
                     Rectangle {
-                        width: parent.width * Math.min(1.0, Math.max(0.02, (root.robotRpc ? root.robotRpc.gripperWidth / 80.0 : 0.48)))
+                        id: sliderFill
+                        width: parent.width * Math.min(1.0, Math.max(0.0, (root.robotRpc ? root.robotRpc.gripperWidth / 80.0 : 0.0)))
                         height: parent.height
-                        radius: 3
+                        radius: 5
                         color: Theme.tertiary
+                    }
+
+                    // 滑块手柄
+                    Rectangle {
+                        x: Math.max(0, Math.min(sliderTrack.width - width, sliderFill.width - width / 2))
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 14; height: 14; radius: 7
+                        color: Theme.primary
+                        border.color: "#FFFFFF"; border.width: 1.5
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        function applyPosition(mouseX) {
+                            var ratio = Math.max(0.0, Math.min(1.0, mouseX / width))
+                            var targetWidth = ratio * 80.0
+                            if (root.robotRpc) root.robotRpc.setGripperWidth(targetWidth)
+                        }
+                        onClicked: function(mouse) { applyPosition(mouse.x) }
+                        onPositionChanged: function(mouse) {
+                            if (pressed) applyPosition(mouse.x)
+                        }
                     }
                 }
 
+                // 快捷操作与微调按钮栏
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "0 mm (闭合)"; color: Theme.textDim; font.family: Theme.fontMono; font.pixelSize: 9 }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "80 mm (最大)"; color: Theme.textDim; font.family: Theme.fontMono; font.pixelSize: 9 }
+                    spacing: 6
+
+                    // 闭合按钮
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 22
+                        radius: Theme.radiusSm
+                        color: Theme.surfaceContainer
+                        border.color: Theme.border; border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "闭合 (0mm)"
+                            color: Theme.textMain; font.family: Theme.fontTitle; font.pixelSize: 9; font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.robotRpc) root.robotRpc.setGripperWidth(0.0)
+                            }
+                        }
+                    }
+
+                    // 微调收拢 (-5mm)
+                    Rectangle {
+                        width: 38
+                        height: 22
+                        radius: Theme.radiusSm
+                        color: Theme.surfaceContainer
+                        border.color: Theme.border; border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "-5mm"
+                            color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9
+                        }
+                        MouseArea {
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.robotRpc) {
+                                    var cur = root.robotRpc.gripperWidth
+                                    root.robotRpc.setGripperWidth(Math.max(0.0, cur - 5.0))
+                                }
+                            }
+                        }
+                    }
+
+                    // 微调开张 (+5mm)
+                    Rectangle {
+                        width: 38
+                        height: 22
+                        radius: Theme.radiusSm
+                        color: Theme.surfaceContainer
+                        border.color: Theme.border; border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "+5mm"
+                            color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9
+                        }
+                        MouseArea {
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.robotRpc) {
+                                    var cur = root.robotRpc.gripperWidth
+                                    root.robotRpc.setGripperWidth(Math.min(80.0, cur + 5.0))
+                                }
+                            }
+                        }
+                    }
+
+                    // 全开按钮
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 22
+                        radius: Theme.radiusSm
+                        color: Theme.surfaceContainer
+                        border.color: Theme.border; border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "张开 (80mm)"
+                            color: Theme.textMain; font.family: Theme.fontTitle; font.pixelSize: 9; font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.robotRpc) root.robotRpc.setGripperWidth(80.0)
+                            }
+                        }
+                    }
                 }
             }
         }

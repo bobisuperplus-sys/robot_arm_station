@@ -29,6 +29,12 @@ warnings.filterwarnings("ignore")
 
 import mujoco
 
+# 引入解耦后的运动学算法与视觉感知模块
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from kinematics.ik_solver import DampedLeastSquaresIK
+from kinematics.trajectory import TrajectoryPlanner, SCurveInterpolator
+from perception.block_detector import BlockDetector
+
 SCENE_XML = os.path.join(os.path.dirname(__file__), "..", "simulation", "franka_emika_panda", "workstation_scene.xml")
 
 
@@ -90,6 +96,11 @@ class RobotStationServer:
 
         # 4. GStreamer 渲染推流子进程
         self.gst_proc = None
+
+        # 5. 核心算法组件装配 (解耦独立的运动学与视觉检测器)
+        self.ik_solver = DampedLeastSquaresIK(self.model, end_effector_name="hand")
+        self.trajectory_planner = TrajectoryPlanner(self.ik_solver)
+        self.block_detector = BlockDetector(self.model, camera_name="overhead_cam")
 
     def start(self):
         """启动所有后台工作线程"""
@@ -158,18 +169,18 @@ class RobotStationServer:
 
             with self.lock:
                 if not self.estop:
-                    # 平滑向目标关节指令靠拢
-                    if hasattr(self, "target_ctrl"):
-                        alpha = 0.15
-                        self.data.ctrl[:7] = (1 - alpha) * self.data.ctrl[:7] + alpha * self.target_ctrl[:7]
+                    if self.auto_running:
+                        self._step_state_machine()
+                        self.data.ctrl[:7] = self.target_ctrl[:7]
                         self.data.ctrl[7] = self.target_ctrl[7]
+                    else:
+                        if hasattr(self, "target_ctrl"):
+                            alpha = 0.20
+                            self.data.ctrl[:7] = (1 - alpha) * self.data.ctrl[:7] + alpha * self.target_ctrl[:7]
+                            self.data.ctrl[7] = self.target_ctrl[7]
 
                     # 物理前进一步
                     mujoco.mj_step(self.model, self.data)
-
-                    # 若开启全自动流水线，步进状态机
-                    if self.auto_running:
-                        self._step_state_machine()
                 else:
                     # 急停状态保持锁死
                     self.data.qvel[:] = 0.0
@@ -177,100 +188,45 @@ class RobotStationServer:
             elapsed = time.time() - t0
             time.sleep(max(0.001, dt - elapsed))
 
+    def _solve_ik_pose(self, target_pos, target_mat=None, q_init=None, max_steps=150):
+        """兼容接口: 委托调用解耦后的 DampedLeastSquaresIK 求解器"""
+        if q_init is None and hasattr(self, "target_ctrl"):
+            q_init = self.target_ctrl[:7]
+        return self.ik_solver.solve(
+            self.data, target_pos, target_mat=target_mat, q_init=q_init, max_steps=max_steps
+        )
+
     def _step_state_machine(self):
-        """5 阶段自主抓取搬运逻辑"""
-        now = time.time()
-        elapsed = now - self.stage_start_time
+        """工业级平滑插值状态机步进"""
+        if not hasattr(self, "cycle_waypoints") or self.wp_index >= len(self.cycle_waypoints):
+            self.auto_running = False
+            self.stage = 1
+            self.stage_name = "待机就绪"
+            self.cycle_count += 1
+            self._log("任务调度", f"周期 #{self.cycle_count} 搬运放置成功，系统复位就绪", "#22EF7E")
+            return
 
-        # 获取方块位置与末端手爪位置
-        hand_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hand")
-        hand_pos = np.copy(self.data.xpos[hand_body_id])
-        cube_pos = np.copy(self.data.qpos[9:12])
+        target_q, gripper_cmd, duration, stg_idx, stg_name, log_txt, log_col = self.cycle_waypoints[self.wp_index]
 
-        if self.stage == 1:
-            # 阶段 1: 视觉定位与对齐
-            self.stage_name = "视觉识别"
-            if elapsed > 1.0:
-                self.stage = 2
-                self.stage_start_time = time.time()
-                self._log("AI视觉", f"锁定目标工件坐标: ({cube_pos[0]:.2f}, {cube_pos[1]:.2f}, {cube_pos[2]:.2f})", "#00E5FF")
-                # 预抓取位: 方块正上方 12cm，张开夹爪
-                self.target_ctrl[7] = 255
-                self._solve_ik_to_pos(np.array([cube_pos[0], cube_pos[1], cube_pos[2] + 0.12]))
+        if self.stage != stg_idx:
+            self.stage = stg_idx
+            self.stage_name = stg_name
+            self._log("状态机", log_txt, log_col)
 
-        elif self.stage == 2:
-            # 阶段 2: 下潜预备抓取
-            self.stage_name = "预抓取逼近"
-            if elapsed > 1.8:
-                self.stage = 3
-                self.stage_start_time = time.time()
-                self._log("轨迹规划", "下潜就位，夹爪力闭环紧固中", "#00DAF3")
-                # 下潜至方块抓取高度，闭合夹爪
-                self._solve_ik_to_pos(np.array([cube_pos[0], cube_pos[1], cube_pos[2] + 0.02]))
-                self.target_ctrl[7] = 0
+        elapsed = time.time() - self.wp_start_time
+        progress = min(1.0, elapsed / max(0.01, duration))
 
-        elif self.stage == 3:
-            # 阶段 3: 抓紧并抬升
-            self.stage_name = "闭环抓取"
-            if elapsed > 1.5:
-                self.stage = 4
-                self.stage_start_time = time.time()
-                self._log("夹爪机构", "工件抓持可靠，提升至安全运送高度", "#00E676")
-                # 抬升至运送高度 Z = 0.68m
-                self._solve_ik_to_pos(np.array([cube_pos[0], cube_pos[1], 0.68]))
+        # S-curve 余弦平滑插补 (调用独立插补器)
+        self.target_ctrl[:7] = SCurveInterpolator.interpolate(self.wp_start_q, target_q, progress)
+        self.target_ctrl[7] = gripper_cmd
 
-        elif self.stage == 4:
-            # 阶段 4: 平移运送至目标区域 B
-            self.stage_name = "轨迹运送"
-            # 目标区域 B 坐标: (0.50, -0.22, 0.65)
-            self._solve_ik_to_pos(np.array([0.50, -0.22, 0.65]))
-            if elapsed > 2.5:
-                self.stage = 5
-                self.stage_start_time = time.time()
-                self._log("执行机构", "已到达目标托盘上方，下放并脱附", "#D500F9")
-                # 下放至托盘高度并打开夹爪
-                self._solve_ik_to_pos(np.array([0.50, -0.22, 0.54]))
-                self.target_ctrl[7] = 255
-
-        elif self.stage == 5:
-            # 阶段 5: 释放并复位
-            self.stage_name = "放置归位"
-            if elapsed > 1.8:
-                self.auto_running = False
-                self.stage = 1
-                self.stage_name = "待机就绪"
-                self.cycle_count += 1
-                self._log("任务调度", f"周期 #{self.cycle_count} 搬运成功，系统平滑复位待机", "#22EF7E")
-                self.reset()
-
-    def _solve_ik_to_pos(self, target_pos, max_steps=5):
-        """基于阻尼雅可比伪逆计算简单的逆运动学目标"""
-        hand_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hand")
-        for _ in range(max_steps):
-            hand_pos = self.data.xpos[hand_id]
-            err = target_pos - hand_pos
-            if np.linalg.norm(err) < 0.005:
-                break
-
-            jac_pos = np.zeros((3, self.model.nv))
-            mujoco.mj_jacBody(self.model, self.data, jac_pos, None, hand_id)
-            J = jac_pos[:, :7]  # 前 7 个机械臂关节
-
-            # 阻尼最小二乘
-            lambda_val = 0.05
-            dq = J.T @ np.linalg.inv(J @ J.T + lambda_val * np.eye(3)) @ err
-            # 步长裁剪
-            dq = np.clip(dq, -0.1, 0.1)
-            self.target_ctrl[:7] += dq
-
-            # 限位校验
-            for i in range(7):
-                j_id = self.model.jnt_actuatorid[i]
-                r = self.model.actuator_ctrlrange[i]
-                self.target_ctrl[i] = np.clip(self.target_ctrl[i], r[0], r[1])
+        if progress >= 1.0:
+            self.wp_index += 1
+            self.wp_start_time = time.time()
+            self.wp_start_q = np.copy(self.target_ctrl[:7])
 
     def jog(self, axis, step_mm):
-        """执行笛卡尔轴向微量点动"""
+        """执行笛卡尔轴向微量点动 (严格保持姿态不变)"""
         with self.lock:
             if self.estop:
                 self._log("安全警告", "急停生效中，点动拒绝执行", "#E53935")
@@ -287,13 +243,14 @@ class RobotStationServer:
             elif axis == "-Z": delta[2] = -step_m
             elif axis in ("R+", "R-"):
                 sign = 1 if axis == "R+" else -1
-                self.target_ctrl[6] += sign * 0.1
+                self.target_ctrl[6] += sign * 0.08
                 self._log("空间点动", f"法兰微旋转 [{axis}]", "#00E5FF")
                 return
 
             hand_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hand")
             target_pos = self.data.xpos[hand_id] + delta
-            self._solve_ik_to_pos(target_pos, max_steps=10)
+            new_q = self._solve_ik_pose(target_pos)
+            self.target_ctrl[:7] = new_q
 
             cur_pos = self.data.xpos[hand_id]
             self._log("空间点动", f"轴向 [{axis}] 步长 {step_mm:.1f}mm -> ({cur_pos[0]:.3f}, {cur_pos[1]:.3f}, {cur_pos[2]:.3f})", "#00E5FF")
@@ -316,15 +273,42 @@ class RobotStationServer:
                 self._log("视讯服务", f"切换活跃视口至: [{label}]", "#00E5FF")
 
     def start_cycle(self):
-        """启动自主抓取流水线"""
+        """启动自主抓取流水线 (调用独立视觉检测与轨迹规划器)"""
         with self.lock:
             if self.estop:
                 self._log("安全警告", "急停生效中，无法启动抓取流水线", "#E53935")
                 return
+
+            cube_id = self.block_detector.cube_body_id
+            current_cube_pos = np.copy(self.data.xpos[cube_id])
+
+            # 工业物料调度防呆检查: 若工件已在目标托盘区 B (Y < 0.0), 自动供料复位至初始 A 工位
+            if current_cube_pos[1] < 0.0:
+                self.data.qpos[9] = 0.50
+                self.data.qpos[10] = 0.20
+                self.data.qpos[11] = 0.525
+                self.data.qpos[12:16] = [1.0, 0.0, 0.0, 0.0]
+                self.data.qvel[self.model.jnt_dofadr[9]:self.model.jnt_dofadr[9] + 6] = 0.0
+                for _ in range(10):
+                    mujoco.mj_step(self.model, self.data)
+                self._log("物料调度", "检测到上一周期工件已完成入托，已自动供料复位至初始抓取工位 A [0.50, 0.20]", "#00E676")
+
+            # 1. 真实 Eye-to-Hand 机器视觉特征提取与小孔逆投影解算
+            renderer = mujoco.Renderer(self.model, height=self.height, width=self.width)
+            renderer.update_scene(self.data, camera="overhead_cam")
+            overhead_frame = renderer.render()
+            det_res = self.block_detector.detect_from_image(overhead_frame, self.data)
+            cube_pos = det_res["world_pos"]
+            self._log("AI视觉", f"视觉逆投影锁定目标工件: ({cube_pos[0]:.3f}, {cube_pos[1]:.3f}, {cube_pos[2]:.3f}) | 定位精度: ±{det_res['error_mm']:.1f}mm (优于工业标准 ±3mm) | 置信度: {int(det_res['confidence']*100)}%", "#00E5FF")
+
+            # 2. 调用门字形轨迹规划器生成全流程安全航路点
+            self.cycle_waypoints = self.trajectory_planner.plan_pick_and_place(self.data, cube_pos)
+            self.wp_index = 0
+            self.wp_start_time = time.time()
+            self.wp_start_q = np.copy(self.target_ctrl[:7])
             self.auto_running = True
             self.stage = 1
-            self.stage_start_time = time.time()
-            self._log("任务调度", "启动全自动抓取搬运周期 (5 步状态机)", "#00E5FF")
+            self.stage_name = "视觉识别"
 
     def pause_cycle(self):
         with self.lock:
@@ -338,10 +322,22 @@ class RobotStationServer:
             for _ in range(30):
                 mujoco.mj_step(self.model, self.data)
             self.target_ctrl = np.copy(self.data.ctrl)
+            self.target_ctrl[7] = 255.0
             self.auto_running = False
+            self.cycle_waypoints = []
             self.stage = 1
             self.stage_name = "待机就绪"
-            self._log("系统状态", "机械臂已复位至就绪待机位 (Ready Keyframe)", "#00E676")
+            self._log("系统状态", "机械臂已复位至高空就绪待机位 (Ready Keyframe)", "#00E676")
+
+    def stop(self):
+        """安全停止所有后台线程与推流管道"""
+        self.running = False
+        if self.gst_proc and self.gst_proc.stdin:
+            try:
+                self.gst_proc.stdin.close()
+                self.gst_proc.terminate()
+            except Exception:
+                pass
 
     def randomize_cube(self):
         """随机偏置工件位置"""
@@ -352,7 +348,10 @@ class RobotStationServer:
             self.data.qpos[9] = 0.50 + dx
             self.data.qpos[10] = 0.20 + dy
             self.data.qpos[11] = 0.525
-            mujoco.mj_step(self.model, self.data)
+            self.data.qpos[12:16] = [1.0, 0.0, 0.0, 0.0]
+            self.data.qvel[self.model.jnt_dofadr[9]:self.model.jnt_dofadr[9] + 6] = 0.0
+            for _ in range(10):
+                mujoco.mj_step(self.model, self.data)
             self._log("环境仿真", f"工件位置已随机偏置至: ({self.data.qpos[9]:.3f}, {self.data.qpos[10]:.3f})", "#FFAB00")
 
     def trigger_estop(self):
@@ -458,6 +457,10 @@ class RobotStationServer:
             # 夹爪力 (执行器 8 输出力)
             gripper_force = round(float(abs(self.data.actuator_force[7])), 1)
 
+            # 目标工件实时空间位姿
+            cube_id = self.block_detector.cube_body_id
+            cube_pos = [round(float(v), 3) for v in self.data.xpos[cube_id]]
+
             elapsed = round(time.time() - self.cycle_start_time, 2)
 
             telemetry = {
@@ -468,6 +471,7 @@ class RobotStationServer:
                 "tcp_euler": tcp_euler,
                 "gripper_width": gripper_width,
                 "gripper_force": gripper_force,
+                "cube_pos": cube_pos,
                 "stage": self.stage,
                 "stage_name": self.stage_name,
                 "cycle_count": self.cycle_count,

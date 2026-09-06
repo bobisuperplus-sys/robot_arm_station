@@ -35,8 +35,11 @@ class RobotRpcClient : public QObject
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
     Q_PROPERTY(QString activeCamera READ activeCamera NOTIFY cameraChanged)
     Q_PROPERTY(double cameraFov READ cameraFov NOTIFY cameraChanged)
-    Q_PROPERTY(QString targetCubeInfo READ targetCubeInfo CONSTANT)
-    Q_PROPERTY(QString poseDeltaInfo READ poseDeltaInfo CONSTANT)
+    Q_PROPERTY(double cubeX READ cubeX NOTIFY cubePoseChanged)
+    Q_PROPERTY(double cubeY READ cubeY NOTIFY cubePoseChanged)
+    Q_PROPERTY(double cubeZ READ cubeZ NOTIFY cubePoseChanged)
+    Q_PROPERTY(QString targetCubeInfo READ targetCubeInfo NOTIFY cubePoseChanged)
+    Q_PROPERTY(QString poseDeltaInfo READ poseDeltaInfo NOTIFY cubePoseChanged)
 
 public:
     explicit RobotRpcClient(QObject *parent = nullptr);
@@ -68,8 +71,21 @@ public:
     QString activeCamera() const { return m_activeCamera; }
     double cameraFov() const { return m_cameraFov; }
 
-    QString targetCubeInfo() const { return "待抓取目标方块 [X: 0.50m, Y: 0.20m, Z: 0.52m] 置信度: 99%"; }
-    QString poseDeltaInfo() const { return "视觉定位偏差: Δx: 0.002m | 姿态对齐: 良好"; }
+    double cubeX() const { return m_cubeX; }
+    double cubeY() const { return m_cubeY; }
+    double cubeZ() const { return m_cubeZ; }
+    QString targetCubeInfo() const {
+        return QString("目标工件: 青色方块 [%1, %2, %3]")
+            .arg(m_cubeX, 0, 'f', 2)
+            .arg(m_cubeY, 0, 'f', 2)
+            .arg(m_cubeZ, 0, 'f', 2);
+    }
+    QString poseDeltaInfo() const {
+        double dx = m_tcpX - m_cubeX;
+        double dy = m_tcpY - m_cubeY;
+        double distMm = std::sqrt(dx * dx + dy * dy) * 1000.0;
+        return QString("视觉偏差: ΔXY %1mm | 抓取法向对齐").arg(distMm, 0, 'f', 1);
+    }
 
 public slots:
     void switchCamera(const QString &camName);
@@ -96,6 +112,7 @@ signals:
     void estopChanged();
     void connectionChanged();
     void cameraChanged();
+    void cubePoseChanged();
     void logAdded(const QString &timestamp, const QString &tag, const QString &content, const QString &color);
 
 private:
@@ -112,6 +129,10 @@ private:
     double m_tcpRoll = 179.8;
     double m_tcpPitch = 0.4;
     double m_tcpYaw = -45.2;
+
+    double m_cubeX = 0.500;
+    double m_cubeY = 0.200;
+    double m_cubeZ = 0.525;
 
     double m_gripperWidth = 38.2;
     double m_gripperForce = 42.0;

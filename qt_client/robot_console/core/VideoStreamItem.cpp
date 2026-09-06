@@ -114,6 +114,6 @@ void VideoStreamItem::paint(QPainter *painter)
         QFont subFont("Inter", 10);
         painter->setFont(subFont);
         QRectF subRect = targetRect.adjusted(0, 50, 0, 50);
-        painter->drawText(subRect, Qt::AlignCenter, "请确保仿真物理引擎与相机推流服务 camera_streamer.py 已启动");
+        painter->drawText(subRect, Qt::AlignCenter, "请确保仿真物理引擎与相机推流服务已启动");
     }
 }

@@ -94,6 +94,20 @@ void RobotRpcClient::onSocketReadyRead()
                 m_tcpYaw = eulerArr[2].toDouble();
             }
 
+            // 目标工件实时空间位姿
+            QJsonArray cubeArr = obj.value("cube_pos").toArray();
+            if (cubeArr.size() >= 3) {
+                double cx = cubeArr[0].toDouble(0.50);
+                double cy = cubeArr[1].toDouble(0.20);
+                double cz = cubeArr[2].toDouble(0.525);
+                if (qAbs(m_cubeX - cx) > 0.001 || qAbs(m_cubeY - cy) > 0.001 || qAbs(m_cubeZ - cz) > 0.001) {
+                    m_cubeX = cx;
+                    m_cubeY = cy;
+                    m_cubeZ = cz;
+                    emit cubePoseChanged();
+                }
+            }
+
             // 夹爪开度与力矩
             m_gripperWidth = obj.value("gripper_width").toDouble(38.2);
             m_gripperForce = obj.value("gripper_force").toDouble(42.0);

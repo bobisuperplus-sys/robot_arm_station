@@ -1,5 +1,6 @@
 # Qt / C++ 构建产物与 IDE 配置
 build/
+**/build/
 bin/
 *.user
 *.user.*
@@ -8,10 +9,19 @@ bin/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+*.ninja*
+.ninja_*
 *.o
 *.a
 *.so
 *.dylib
+*.qmlc
+*.jsc
+*.qmake.stash
+approbot_console
+moc_*
+qrc_*
+ui_*
 
 # Python 运行时与缓存
 __pycache__/
