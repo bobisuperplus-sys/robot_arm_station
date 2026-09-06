@@ -1,90 +1,101 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
-
+import "theme"
+import "components"
+import "views"
+import robot_console 1.0
 
 ApplicationWindow {
     id: window
-    width: 640
-    height: 480
-    minimumWidth: 200
-    minimumHeight: 250
+    width: 1560
+    height: 940
+    minimumWidth: 1200
+    minimumHeight: 760
     visible: true
-    title: qsTr("Hello World")
-    property bool lightMode: Application.styleHints.colorScheme === Qt.Light
-    property color reallyDark: "#1f1f1f"
-    property color dark: "#262626"
-    property color reallyLight: "#e7e7e7"
-    property color light: "#e0e0e0"
+    title: qsTr("MHS 具身机械臂视觉自主抓取数字孪生控制台")
+    color: Theme.canvas
 
-    GridLayout {
-        id: grid
-        columns: width < 400 ? 1 : 2
-        rowSpacing: 0
-        columnSpacing: 0
+    // 后端核心业务与流媒体对象
+    RobotRpcClient {
+        id: robotRpc
+    }
+
+    GstVideoReceiver {
+        id: videoReceiver
+        Component.onCompleted: {
+            // 自动开启 UDP:5002 H.264 视频流接收
+            startStream(5002)
+        }
+    }
+
+    ColumnLayout {
         anchors.fill: parent
+        spacing: 0
 
-        Rectangle {
-            id: rectangle1
-            color: window.lightMode ? window.reallyLight : window.reallyDark
-            Layout.fillHeight: true
+        // 顶部 HUD 状态与急停导航栏
+        TopHeaderBar {
             Layout.fillWidth: true
-
-            ColumnLayout {
-                anchors.fill: parent
-                Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
-
-                Label {
-                    id: text1
-                    color: window.lightMode ? window.dark : window.light
-                    font.pixelSize: 120
-                    fontSizeMode: Text.Fit
-                    text: qsTr("Hello World")
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.margins: 16
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-            }
+            robotRpc: robotRpc
+            receiver: videoReceiver
         }
 
-        Rectangle {
-            id: rectangle2
-            color: window.lightMode ? window.light : window.dark
-            Layout.fillHeight: true
+        // 双栏响应式主工作区 (左 64% 视讯与 HUD / 右 36% 控制与遥测)
+        RowLayout {
             Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.margins: 8
+            spacing: 8
 
-            ColumnLayout {
-                anchors.fill: parent
-                Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+            // 左侧：多相机视讯与 HUD 视觉感知面板 (64%)
+            VideoViewport {
+                Layout.fillHeight: true
+                Layout.fillWidth: true
+                Layout.preferredWidth: (window.width - 24) * 0.64
+                Layout.minimumWidth: 640
+                robotRpc: robotRpc
+                receiver: videoReceiver
+            }
 
-                Button {
-                    id: button1
-                    text: window.lightMode ? qsTr("\u263D  Dark mode")
-                                           : qsTr("\u263C  Light mode")
-                    Layout.bottomMargin: 16
-                    Layout.alignment: Qt.AlignHCenter | Qt.AlignBottom
+            // 右侧：4 大控制与遥测卡片列 (36%)
+            ScrollView {
+                id: rightScroll
+                Layout.fillHeight: true
+                Layout.preferredWidth: (window.width - 24) * 0.36
+                Layout.minimumWidth: 380
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    contentItem: Text {
-                        text: button1.text
-                        color: window.lightMode ? window.light : window.dark
-                        font: button1.font
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                ColumnLayout {
+                    width: rightScroll.availableWidth
+                    spacing: 8
+
+                    // 卡片 1: 5 步任务流水线
+                    TaskPipelineCard {
+                        Layout.fillWidth: true
+                        robotRpc: robotRpc
                     }
 
-                    background: Rectangle {
-                        implicitWidth: 120
-                        implicitHeight: 36
-                        radius: 8
-                        color: window.lightMode ? window.dark : window.light
+                    // 卡片 2: 7 轴关节空间实时遥测
+                    JointTelemetryCard {
+                        Layout.fillWidth: true
+                        robotRpc: robotRpc
                     }
 
-                    onClicked: window.lightMode = !window.lightMode
+                    // 卡片 3: 末端夹爪与空间点动控制
+                    GripperJogCard {
+                        Layout.fillWidth: true
+                        robotRpc: robotRpc
+                    }
+
+                    // 卡片 4: 硬件通信与事件日志
+                    TerminalLogCard {
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: 180
+                        robotRpc: robotRpc
+                    }
                 }
             }
         }
     }
-
 }
