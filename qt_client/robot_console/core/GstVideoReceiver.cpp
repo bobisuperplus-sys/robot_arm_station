@@ -81,14 +81,16 @@ void GstVideoReceiver::run()
     QElapsedTimer fpsTimer;
     fpsTimer.start();
     int frameCount = 0;
-    qint64 lastFrameTime = 0;
+
+    QElapsedTimer frameTimeoutTimer;
+    frameTimeoutTimer.start();
 
     while (m_running) {
         // 每 25 毫秒尝试从 appsink 拉取样本
         GstSample *sample = gst_app_sink_try_pull_sample(GST_APP_SINK(m_sink), 25 * GST_MSECOND);
         if (!sample) {
-            // 若长时间未收到数据帧，标记断开连接
-            if (m_connected && (fpsTimer.elapsed() - lastFrameTime > 2000)) {
+            // 连续 3000ms 无帧时才判定断开
+            if (m_connected && frameTimeoutTimer.hasExpired(3000)) {
                 m_connected = false;
                 m_currentFps = 0.0;
                 emit connectionStatusChanged(false);
@@ -97,6 +99,8 @@ void GstVideoReceiver::run()
             continue;
         }
 
+        frameTimeoutTimer.restart();
+
         if (!m_connected) {
             m_connected = true;
             emit connectionStatusChanged(true);
@@ -104,7 +108,6 @@ void GstVideoReceiver::run()
             emit statusChanged(m_statusText);
         }
 
-        lastFrameTime = fpsTimer.elapsed();
         frameCount++;
 
         if (fpsTimer.elapsed() >= 1000) {
@@ -112,7 +115,6 @@ void GstVideoReceiver::run()
             emit fpsUpdated(m_currentFps);
             frameCount = 0;
             fpsTimer.restart();
-            lastFrameTime = 0;
         }
 
         GstCaps *caps = gst_sample_get_caps(sample);
@@ -128,6 +130,20 @@ void GstVideoReceiver::run()
             QImage img(map.data, width, height, width * 3, QImage::Format_RGB888);
             QImage frameCopy = img.copy();
             gst_buffer_unmap(buffer, &map);
+
+            static int dbgCount = 0;
+            if (++dbgCount % 60 == 1) {
+                int rMid = qRed(frameCopy.pixel(width / 2, height / 2));
+                int gMid = qGreen(frameCopy.pixel(width / 2, height / 2));
+                int bMid = qBlue(frameCopy.pixel(width / 2, height / 2));
+                int rCorner = qRed(frameCopy.pixel(10, 10));
+                int gCorner = qGreen(frameCopy.pixel(10, 10));
+                int bCorner = qBlue(frameCopy.pixel(10, 10));
+                qDebug() << "[GstReceiver] 帧解码数据: w=" << width << "h=" << height
+                         << "center RGB=(" << rMid << gMid << bMid << ")"
+                         << "corner RGB=(" << rCorner << gCorner << bCorner << ")"
+                         << "bytes=" << map.size;
+            }
 
             emit frameReceived(frameCopy);
         }

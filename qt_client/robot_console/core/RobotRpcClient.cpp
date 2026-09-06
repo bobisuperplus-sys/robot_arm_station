@@ -1,178 +1,214 @@
 #include "RobotRpcClient.h"
-#include <QRandomGenerator>
+#include <QDebug>
 
 RobotRpcClient::RobotRpcClient(QObject *parent)
     : QObject(parent)
 {
-    // 初始化 7 轴基准角度与力矩
-    m_jointAngles = QVariantList{-12.4, 28.6, 0.5, -118.2, 4.2, 94.1, 44.8};
-    m_jointTorques = QVariantList{0.82, 14.10, 0.12, -18.40, 1.64, 3.80, 0.45};
+    // 初始基准数据
+    m_jointAngles = QVariantList{0.0, -22.9, 0.0, -126.0, 0.0, 103.1, 45.0};
+    m_jointTorques = QVariantList{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    // 高频遥测微颤抖动定时器 (100ms 刷新，模拟工业 EtherCAT 遥测)
-    connect(&m_tickTimer, &QTimer::timeout, this, [this]() {
-        if (m_emergencyStopped) return;
+    m_socket = new QTcpSocket(this);
+    connect(m_socket, &QTcpSocket::connected, this, &RobotRpcClient::onSocketConnected);
+    connect(m_socket, &QTcpSocket::disconnected, this, &RobotRpcClient::onSocketDisconnected);
+    connect(m_socket, &QTcpSocket::readyRead, this, &RobotRpcClient::onSocketReadyRead);
 
-        // 对力矩与微小位姿增加真实微抖动
-        double jitter = (QRandomGenerator::global()->generateDouble() - 0.5) * 0.04;
-        if (!m_jointTorques.isEmpty()) {
-            double baseT4 = -18.40 + jitter * 2.0;
-            m_jointTorques[3] = QString::number(baseT4, 'f', 2).toDouble();
+    connect(&m_reconnectTimer, &QTimer::timeout, this, &RobotRpcClient::tryConnect);
+    m_reconnectTimer.start(2000);
+
+    tryConnect();
+}
+
+RobotRpcClient::~RobotRpcClient()
+{
+    if (m_socket && m_socket->isOpen()) {
+        m_socket->disconnectFromHost();
+    }
+}
+
+void RobotRpcClient::tryConnect()
+{
+    if (!m_socket) return;
+    if (m_socket->state() == QAbstractSocket::UnconnectedState) {
+        m_socket->connectToHost("127.0.0.1", 6000);
+    }
+}
+
+void RobotRpcClient::onSocketConnected()
+{
+    m_connected = true;
+    appendLog("总线通信", "已连接 MuJoCo 真实物理引擎服务总线 (127.0.0.1:6000)", "#00E5FF");
+    emit connectionChanged();
+}
+
+void RobotRpcClient::onSocketDisconnected()
+{
+    m_connected = false;
+    appendLog("总线通信", "物理总线断开连接，正在尝试后台重连...", "#FFAB00");
+    emit connectionChanged();
+}
+
+void RobotRpcClient::onSocketReadyRead()
+{
+    if (!m_socket) return;
+    m_readBuffer.append(m_socket->readAll());
+
+    int newlinePos = -1;
+    while ((newlinePos = m_readBuffer.indexOf('\n')) != -1) {
+        QByteArray line = m_readBuffer.left(newlinePos).trimmed();
+        m_readBuffer.remove(0, newlinePos + 1);
+
+        if (line.isEmpty()) continue;
+
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(line, &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) continue;
+
+        QJsonObject obj = doc.object();
+        QString type = obj.value("type").toString();
+
+        if (type == "telemetry") {
+            // 解析 7 轴真实关节角与力矩
+            QJsonArray jArr = obj.value("joints").toArray();
+            QVariantList newAngles;
+            for (const auto &v : jArr) newAngles.append(v.toDouble());
+            if (!newAngles.isEmpty()) m_jointAngles = newAngles;
+
+            QJsonArray tArr = obj.value("torques").toArray();
+            QVariantList newTorques;
+            for (const auto &v : tArr) newTorques.append(v.toDouble());
+            if (!newTorques.isEmpty()) m_jointTorques = newTorques;
+
+            // 解析真实 TCP 位姿
+            QJsonArray posArr = obj.value("tcp_pos").toArray();
+            if (posArr.size() >= 3) {
+                m_tcpX = posArr[0].toDouble();
+                m_tcpY = posArr[1].toDouble();
+                m_tcpZ = posArr[2].toDouble();
+            }
+
+            QJsonArray eulerArr = obj.value("tcp_euler").toArray();
+            if (eulerArr.size() >= 3) {
+                m_tcpRoll = eulerArr[0].toDouble();
+                m_tcpPitch = eulerArr[1].toDouble();
+                m_tcpYaw = eulerArr[2].toDouble();
+            }
+
+            // 夹爪开度与力矩
+            m_gripperWidth = obj.value("gripper_width").toDouble(38.2);
+            m_gripperForce = obj.value("gripper_force").toDouble(42.0);
+
+            // 任务流水线
+            int st = obj.value("stage").toInt(1);
+            QString stName = obj.value("stage_name").toString("待机就绪");
+            if (m_currentStage != st || m_stageName != stName) {
+                m_currentStage = st;
+                m_stageName = stName;
+                emit stageChanged();
+            }
+
+            m_cycleCount = obj.value("cycle_count").toInt(m_cycleCount);
+            m_cycleElapsed = obj.value("cycle_elapsed").toDouble(m_cycleElapsed);
+
+            bool estopVal = obj.value("estop").toBool(false);
+            if (m_emergencyStopped != estopVal) {
+                m_emergencyStopped = estopVal;
+                emit estopChanged();
+            }
+
+            QString cam = obj.value("active_camera").toString("overhead_cam");
+            double fov = obj.value("camera_fov").toDouble(58.0);
+            if (m_activeCamera != cam || m_cameraFov != fov) {
+                m_activeCamera = cam;
+                m_cameraFov = fov;
+                emit cameraChanged();
+            }
+
             emit telemetryUpdated();
-        }
-    });
-    m_tickTimer.start(100);
-
-    // 任务流水线自动步进定时器
-    connect(&m_cycleStepTimer, &QTimer::timeout, this, [this]() {
-        if (!m_isAutoRunning || m_emergencyStopped) return;
-
-        m_cycleElapsed += 0.5;
-        if (m_cycleElapsed > m_cycleTotalEstimate) {
-            m_cycleElapsed = 0.0;
-            m_cycleCount++;
+            emit gripperChanged();
             emit cycleUpdated();
+
+        } else if (type == "log") {
+            QString timeStr = obj.value("time").toString();
+            QString tag = obj.value("tag").toString();
+            QString content = obj.value("content").toString();
+            QString color = obj.value("color").toString("#F0F3F6");
+            emit logAdded(timeStr, tag, content, color);
         }
+    }
+}
 
-        int nextStage = (m_currentStage % 5) + 1;
-        m_currentStage = nextStage;
+void RobotRpcClient::sendRpc(const QString &method, const QJsonObject &params)
+{
+    QJsonObject req;
+    req["method"] = method;
+    req["params"] = params;
 
-        switch (m_currentStage) {
-        case 1:
-            m_stageName = "视觉识别";
-            appendLog("AI视觉", "相机视场角更新，锁定目标工件色块", "#00E5FF");
-            break;
-        case 2:
-            m_stageName = "预抓取逼近";
-            appendLog("轨迹规划", "逆运动学插补中，末端向预抓取点位下潜", "#00DAF3");
-            break;
-        case 3:
-            m_stageName = "闭环抓取";
-            setGripperWidth(38.0);
-            appendLog("夹爪机构", "触觉力闭环紧固，当前夹持力 42N", "#00E676");
-            break;
-        case 4:
-            m_stageName = "轨迹运送";
-            appendLog("执行机构", "笛卡尔多项式平滑运送至目标托盘上方", "#D500F9");
-            break;
-        case 5:
-            m_stageName = "放置归位";
-            setGripperWidth(75.0);
-            appendLog("任务调度", "工件成功放置在区域 B，准备复位初始位", "#22EF7E");
-            break;
-        }
-
-        emit stageChanged();
-        emit cycleUpdated();
-    });
+    QByteArray data = QJsonDocument(req).toJson(QJsonDocument::Compact) + "\n";
+    if (m_socket && m_socket->state() == QAbstractSocket::ConnectedState) {
+        m_socket->write(data);
+        m_socket->flush();
+    }
 }
 
 void RobotRpcClient::appendLog(const QString &tag, const QString &content, const QString &color)
 {
-    QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
+    QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
     emit logAdded(timeStr, tag, content, color);
+}
+
+void RobotRpcClient::switchCamera(const QString &camName)
+{
+    m_activeCamera = camName;
+    m_cameraFov = (camName == "overhead_cam") ? 58.0 : 45.0;
+    emit cameraChanged();
+
+    QJsonObject p;
+    p["camera"] = camName;
+    sendRpc("switch_camera", p);
 }
 
 void RobotRpcClient::startAutoCycle()
 {
-    if (m_emergencyStopped) {
-        appendLog("安全警告", "急停状态激活中，无法启动抓取流水线", "#E53935");
-        return;
-    }
-
-    m_isAutoRunning = true;
-    m_currentStage = 1;
-    m_stageName = "视觉识别";
-    m_cycleElapsed = 0.0;
-    m_cycleStepTimer.start(1200);
-
-    appendLog("控制指令", "启动全自动抓取搬运周期 (5 阶段状态机)", "#00E5FF");
-    emit stageChanged();
-    emit cycleUpdated();
-}
-
-void RobotRpcClient::randomizeTarget()
-{
-    double dx = (QRandomGenerator::global()->generateDouble() - 0.5) * 0.1;
-    double dy = (QRandomGenerator::global()->generateDouble() - 0.5) * 0.1;
-    m_tcpX = 0.500 + dx;
-    m_tcpY = 0.200 + dy;
-
-    appendLog("AI视觉", QString("目标方块位置已随机偏置至: (%1, %2, 0.525)")
-                              .arg(m_tcpX, 0, 'f', 3)
-                              .arg(m_tcpY, 0, 'f', 3),
-              "#FFAB00");
-    emit telemetryUpdated();
+    sendRpc("start_cycle");
 }
 
 void RobotRpcClient::pauseTrajectory()
 {
-    m_isAutoRunning = false;
-    m_cycleStepTimer.stop();
-    appendLog("控制指令", "轨迹插补已暂停，保持当前关节刚度阻抗", "#FFAB00");
+    sendRpc("pause_cycle");
 }
 
 void RobotRpcClient::jogAxis(const QString &axis, double stepMm)
 {
-    if (m_emergencyStopped) {
-        appendLog("安全警告", "急停生效中，轴动受阻", "#E53935");
-        return;
-    }
-
-    double stepM = stepMm / 1000.0;
-    if (axis == "+X") m_tcpX += stepM;
-    else if (axis == "-X") m_tcpX -= stepM;
-    else if (axis == "+Y") m_tcpY += stepM;
-    else if (axis == "-Y") m_tcpY -= stepM;
-    else if (axis == "+Z") m_tcpZ += stepM;
-    else if (axis == "-Z") m_tcpZ -= stepM;
-    else if (axis == "R+") m_tcpYaw += 5.0;
-    else if (axis == "R-") m_tcpYaw -= 5.0;
-
-    appendLog("空间点动", QString("轴向点动 [%1] 步长: %2mm -> TCP: (%3, %4, %5)")
-                              .arg(axis)
-                              .arg(stepMm, 0, 'f', 1)
-                              .arg(m_tcpX, 0, 'f', 3)
-                              .arg(m_tcpY, 0, 'f', 3)
-                              .arg(m_tcpZ, 0, 'f', 3),
-              "#00E5FF");
-    emit telemetryUpdated();
+    QJsonObject p;
+    p["axis"] = axis;
+    p["step_mm"] = stepMm;
+    sendRpc("jog", p);
 }
 
 void RobotRpcClient::setGripperWidth(double widthMm)
 {
-    m_gripperWidth = qBound(0.0, widthMm, 80.0);
+    m_gripperWidth = widthMm;
     emit gripperChanged();
+
+    QJsonObject p;
+    p["width_mm"] = widthMm;
+    sendRpc("set_gripper", p);
 }
 
 void RobotRpcClient::triggerEstop()
 {
-    m_emergencyStopped = !m_emergencyStopped;
-    if (m_emergencyStopped) {
-        m_isAutoRunning = false;
-        m_cycleStepTimer.stop();
-        appendLog("安全联锁", "紧急制动 (E-STOP) 已触发! 伺服断电锁死", "#E53935");
-    } else {
-        appendLog("安全联锁", "紧急制动已解除，系统处于低速安全待命状态", "#00E676");
-    }
-    emit estopChanged();
+    sendRpc("estop");
 }
 
 void RobotRpcClient::resetToHome()
 {
-    m_tcpX = 0.500;
-    m_tcpY = 0.200;
-    m_tcpZ = 0.525;
-    m_tcpRoll = 179.8;
-    m_tcpPitch = 0.4;
-    m_tcpYaw = -45.2;
-    m_gripperWidth = 38.2;
-    m_currentStage = 1;
-    m_stageName = "待机就绪";
+    sendRpc("reset");
+}
 
-    appendLog("执行机构", "机械臂已平滑复位至初始就绪姿态 (Ready Keyframe)", "#00E676");
-    emit telemetryUpdated();
-    emit gripperChanged();
-    emit stageChanged();
+void RobotRpcClient::randomizeTarget()
+{
+    sendRpc("randomize");
 }
 
 void RobotRpcClient::sendCliCommand(const QString &cmd)
@@ -182,9 +218,14 @@ void RobotRpcClient::sendCliCommand(const QString &cmd)
 
     if (cmd.contains("reset", Qt::CaseInsensitive)) {
         resetToHome();
-    } else if (cmd.contains("stop", Qt::CaseInsensitive)) {
+    } else if (cmd.contains("stop", Qt::CaseInsensitive) || cmd.contains("pause", Qt::CaseInsensitive)) {
         pauseTrajectory();
+    } else if (cmd.contains("start", Qt::CaseInsensitive) || cmd.contains("run", Qt::CaseInsensitive)) {
+        startAutoCycle();
+    } else if (cmd.contains("cam", Qt::CaseInsensitive)) {
+        if (cmd.contains("2")) switchCamera("surveillance_cam");
+        else switchCamera("overhead_cam");
     } else {
-        appendLog("系统响应", "指令执行成功: ACK 0x00", "#00E5FF");
+        appendLog("系统响应", "指令已投递至总线: ACK 0x00", "#00E5FF");
     }
 }

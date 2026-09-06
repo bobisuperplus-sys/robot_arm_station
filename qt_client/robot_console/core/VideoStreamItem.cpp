@@ -42,6 +42,10 @@ void VideoStreamItem::onFrameReceived(const QImage &frame)
 {
     m_currentFrame = frame;
     m_connected = true;
+    static int pCount = 0;
+    if (++pCount % 60 == 1) {
+        qDebug() << "[VideoStreamItem] 收到渲染帧:" << frame.size() << "item size:" << width() << "x" << height();
+    }
     emit hasFrameChanged();
     update();
 }

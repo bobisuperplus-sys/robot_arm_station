@@ -10,7 +10,7 @@ Rectangle {
 
     property RobotRpcClient robotRpc: null
     property GstVideoReceiver receiver: null
-    property int selectedCamera: 1
+    readonly property int selectedCamera: (robotRpc && robotRpc.activeCamera === "surveillance_cam") ? 2 : 1
     property bool showGrid: true
 
     color: Theme.surface
@@ -65,7 +65,9 @@ Rectangle {
                     }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: root.selectedCamera = 1
+                        onClicked: {
+                            if (root.robotRpc) root.robotRpc.switchCamera("overhead_cam")
+                        }
                     }
                 }
 
@@ -95,7 +97,9 @@ Rectangle {
                     }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: root.selectedCamera = 2
+                        onClicked: {
+                            if (root.robotRpc) root.robotRpc.switchCamera("surveillance_cam")
+                        }
                     }
                 }
 
@@ -103,7 +107,7 @@ Rectangle {
 
                 // 相机参数读数
                 Text {
-                    text: "FOV: 78.5°"
+                    text: "FOV: " + (robotRpc ? robotRpc.cameraFov.toFixed(1) : (root.selectedCamera === 2 ? "45.0" : "58.0")) + "°"
                     color: Theme.textMuted
                     font.family: Theme.fontMono; font.pixelSize: 10
                 }
@@ -229,8 +233,9 @@ Rectangle {
                 }
             }
 
-            // AI 视觉目标方块跟踪框 (Cyan Bounding Box)
+            // AI 视觉目标方块跟踪框 (仅在俯视 Eye-to-Hand 模式呈现)
             Rectangle {
+                visible: root.selectedCamera === 1
                 x: parent.width * 0.44
                 y: parent.height * 0.28
                 width: 170
@@ -261,7 +266,7 @@ Rectangle {
                     Text {
                         id: boxTagText
                         anchors.centerIn: parent
-                        text: "目标工件: 青色方块 [0.50, 0.20, 0.52]"
+                        text: (robotRpc ? robotRpc.targetCubeInfo : "目标工件: 青色方块 [0.50, 0.20, 0.52]")
                         color: Theme.textOnPrimary
                         font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true
                     }
@@ -280,15 +285,16 @@ Rectangle {
                     Text {
                         id: boxFootText
                         anchors.centerIn: parent
-                        text: "视觉偏差: Δx 0.002m | 抓取法向对齐"
+                        text: (robotRpc ? robotRpc.poseDeltaInfo : "视觉偏差: Δx 0.002m | 抓取法向对齐")
                         color: Theme.primary
                         font.family: Theme.fontMono; font.pixelSize: 9
                     }
                 }
             }
 
-            // 末端 TCP 瞄准准星 (Reticle)
+            // 末端 TCP 瞄准准星 (仅在俯视 Eye-to-Hand 模式呈现)
             Item {
+                visible: root.selectedCamera === 1
                 x: parent.width * 0.49
                 y: parent.height * 0.36
                 width: 60
@@ -326,6 +332,35 @@ Rectangle {
                     text: "TCP锁定: 已就位"
                     color: Theme.primary
                     font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true
+                }
+            }
+
+            // 3D 全局透视监控安全包络指示层 (仅在相机 02 模式呈现)
+            Rectangle {
+                visible: root.selectedCamera === 2
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: 20
+                height: 28
+                width: survRow.implicitWidth + 24
+                radius: Theme.radiusSm
+                color: Qt.rgba(0.04, 0.06, 0.08, 0.88)
+                border.color: Theme.tertiary
+                border.width: 1
+
+                RowLayout {
+                    id: survRow
+                    anchors.centerIn: parent
+                    spacing: 8
+                    Rectangle {
+                        width: 8; height: 8; radius: 4
+                        color: Theme.tertiary
+                    }
+                    Text {
+                        text: "3D 全景空间监控模式 | 视场角 45.0° | 电子安全包络就绪"
+                        color: Theme.textMain
+                        font.family: Theme.fontTitle; font.pixelSize: 10; font.bold: true
+                    }
                 }
             }
 

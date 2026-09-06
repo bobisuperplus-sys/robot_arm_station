@@ -4,10 +4,14 @@
 #include <QVariantList>
 #include <QTimer>
 #include <QDateTime>
+#include <QTcpSocket>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
 
 /**
  * @brief 机械臂控制与遥测总线控制器
- * 管理 7 轴关节空间、TCP 笛卡尔位姿、末端夹爪、5 阶段任务状态机与指令总线交互。
+ * 管理 7 轴关节空间、TCP 笛卡尔位姿、末端夹爪、5 阶段任务状态机、多机位切换与 TCP JSON-RPC 全双工通信。
  */
 class RobotRpcClient : public QObject
 {
@@ -29,12 +33,14 @@ class RobotRpcClient : public QObject
     Q_PROPERTY(double cycleTotalEstimate READ cycleTotalEstimate NOTIFY cycleUpdated)
     Q_PROPERTY(bool emergencyStopped READ emergencyStopped NOTIFY estopChanged)
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
+    Q_PROPERTY(QString activeCamera READ activeCamera NOTIFY cameraChanged)
+    Q_PROPERTY(double cameraFov READ cameraFov NOTIFY cameraChanged)
     Q_PROPERTY(QString targetCubeInfo READ targetCubeInfo CONSTANT)
     Q_PROPERTY(QString poseDeltaInfo READ poseDeltaInfo CONSTANT)
 
 public:
     explicit RobotRpcClient(QObject *parent = nullptr);
-    ~RobotRpcClient() override = default;
+    ~RobotRpcClient() override;
 
     QVariantList jointAngles() const { return m_jointAngles; }
     QVariantList jointTorques() const { return m_jointTorques; }
@@ -59,10 +65,14 @@ public:
     bool emergencyStopped() const { return m_emergencyStopped; }
     bool isConnected() const { return m_connected; }
 
+    QString activeCamera() const { return m_activeCamera; }
+    double cameraFov() const { return m_cameraFov; }
+
     QString targetCubeInfo() const { return "待抓取目标方块 [X: 0.50m, Y: 0.20m, Z: 0.52m] 置信度: 99%"; }
     QString poseDeltaInfo() const { return "视觉定位偏差: Δx: 0.002m | 姿态对齐: 良好"; }
 
 public slots:
+    void switchCamera(const QString &camName);
     void startAutoCycle();
     void randomizeTarget();
     void pauseTrajectory();
@@ -72,6 +82,12 @@ public slots:
     void resetToHome();
     void sendCliCommand(const QString &cmd);
 
+private slots:
+    void onSocketConnected();
+    void onSocketDisconnected();
+    void onSocketReadyRead();
+    void tryConnect();
+
 signals:
     void telemetryUpdated();
     void gripperChanged();
@@ -79,9 +95,14 @@ signals:
     void cycleUpdated();
     void estopChanged();
     void connectionChanged();
+    void cameraChanged();
     void logAdded(const QString &timestamp, const QString &tag, const QString &content, const QString &color);
 
 private:
+    QTcpSocket *m_socket = nullptr;
+    QTimer m_reconnectTimer;
+    QByteArray m_readBuffer;
+
     QVariantList m_jointAngles;
     QVariantList m_jointTorques;
 
@@ -95,19 +116,19 @@ private:
     double m_gripperWidth = 38.2;
     double m_gripperForce = 42.0;
 
-    int m_currentStage = 3;
-    QString m_stageName = "闭环抓取";
+    int m_currentStage = 1;
+    QString m_stageName = "待机就绪";
 
     int m_cycleCount = 142;
     double m_cycleElapsed = 1.84;
     double m_cycleTotalEstimate = 3.20;
 
     bool m_emergencyStopped = false;
-    bool m_connected = true;
-    bool m_isAutoRunning = false;
+    bool m_connected = false;
 
-    QTimer m_tickTimer;
-    QTimer m_cycleStepTimer;
+    QString m_activeCamera = "overhead_cam";
+    double m_cameraFov = 58.0;
 
+    void sendRpc(const QString &method, const QJsonObject &params = QJsonObject());
     void appendLog(const QString &tag, const QString &content, const QString &color = "#F0F3F6");
 };
