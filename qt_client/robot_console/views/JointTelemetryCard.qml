@@ -19,7 +19,7 @@ CyberCard {
     ]
 
     ColumnLayout {
-        anchors.fill: parent
+        Layout.fillWidth: true
         spacing: 4
 
         Repeater {

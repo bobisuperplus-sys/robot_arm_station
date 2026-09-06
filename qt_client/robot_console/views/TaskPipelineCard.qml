@@ -15,7 +15,7 @@ CyberCard {
     accentColor: Theme.primary
 
     ColumnLayout {
-        anchors.fill: parent
+        Layout.fillWidth: true
         spacing: 10
 
         // 5 步流水线横向节点

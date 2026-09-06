@@ -16,11 +16,14 @@ Rectangle {
     border.color: Theme.border
     border.width: 1
 
+    // 卡片高度根据内部内容高度精确自适应展开，杜绝层叠挤压
     implicitHeight: mainCol.implicitHeight + 20
 
     ColumnLayout {
         id: mainCol
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
         anchors.margins: 10
         spacing: 8
 
@@ -65,11 +68,11 @@ Rectangle {
             color: Theme.border
         }
 
-        // 自定义内容承载区
-        Item {
+        // 自定义内容承载区 (ColumnLayout 能够自动向下级联计算所有子项的 implicitHeight)
+        ColumnLayout {
             id: contentContainer
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            spacing: 8
         }
     }
 

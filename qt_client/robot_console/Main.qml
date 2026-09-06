@@ -64,9 +64,13 @@ ApplicationWindow {
                 Layout.preferredWidth: (window.width - 24) * 0.36
                 Layout.minimumWidth: 380
                 clip: true
+                contentWidth: availableWidth
+                contentHeight: rightCol.implicitHeight
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                 ColumnLayout {
+                    id: rightCol
                     width: rightScroll.availableWidth
                     spacing: 8
 
@@ -91,7 +95,6 @@ ApplicationWindow {
                     // 卡片 4: 硬件通信与事件日志
                     TerminalLogCard {
                         Layout.fillWidth: true
-                        Layout.minimumHeight: 180
                         robotRpc: robotRpc
                     }
                 }

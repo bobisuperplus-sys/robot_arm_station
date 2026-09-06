@@ -35,13 +35,14 @@ CyberCard {
     }
 
     ColumnLayout {
-        anchors.fill: parent
+        Layout.fillWidth: true
         spacing: 6
 
         // 日志滚动显示区
         Rectangle {
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.preferredHeight: 140
+            implicitHeight: 140
             color: "#0A0C0F"
             radius: Theme.radiusSm
             border.color: Theme.border

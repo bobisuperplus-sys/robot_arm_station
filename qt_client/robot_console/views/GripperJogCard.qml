@@ -16,13 +16,13 @@ CyberCard {
     accentColor: Theme.primary
 
     ColumnLayout {
-        anchors.fill: parent
+        Layout.fillWidth: true
         spacing: 8
 
         // 夹爪开度与力矩指示槽
         Rectangle {
             Layout.fillWidth: true
-            height: 52
+            implicitHeight: 52
             color: Theme.surfaceContainerLowest
             radius: Theme.radiusSm
             border.color: Theme.border
@@ -88,7 +88,7 @@ CyberCard {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 22
+                    implicitHeight: 22
                     radius: Theme.radiusSm
                     color: root.selectedStepMm === modelData ? Theme.primary : Theme.surfaceContainer
                     border.color: Theme.border; border.width: 1
