@@ -21,10 +21,10 @@
     <!-- 地面 -->
     <geom name="floor" size="3 3 0.05" type="plane" material="ground_mat"/>
 
-    <!-- 工业实验工作台 (Table) -->
+    <!-- 工业实验工作台 (Table) - 调整为深色哑光碳灰色，与白色机械臂形成鲜明对比 -->
     <!-- 桌面中心在 (0.5, 0, 0.25), 桌面顶面高度 Z = 0.50m -->
     <body name="worktable" pos="0.5 0 0.25">
-      <geom name="table_top" type="box" size="0.4 0.5 0.25" rgba="0.82 0.84 0.88 1.0" friction="0.8 0.02 0.001"/>
+      <geom name="table_top" type="box" size="0.4 0.5 0.25" rgba="0.15 0.17 0.20 1.0" friction="0.8 0.02 0.001"/>
     </body>
 
     <!-- 目标落点放置区 (B位置 - 目标点，橙色标记区域) -->
