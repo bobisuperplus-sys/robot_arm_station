@@ -1,0 +1,55 @@
+<mujoco model="robot arm pick and place workstation">
+  <include file="panda.xml"/>
+
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.3 0.3 0.3" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="135" elevation="-25" offwidth="1280" offheight="720"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.2 0.35 0.5" rgb2="0.05 0.05 0.1" width="512" height="512"/>
+    <texture type="2d" name="ground_tex" builtin="checker" mark="edge" rgb1="0.22 0.24 0.28" rgb2="0.16 0.18 0.22" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="ground_mat" texture="ground_tex" texuniform="true" texrepeat="5 5" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <!-- 光照系统 -->
+    <light pos="0 0 2.5" dir="0 0 -1" directional="true" diffuse="0.85 0.85 0.85" specular="0.2 0.2 0.2"/>
+    <light pos="1.2 1.0 2.0" dir="-0.5 -0.5 -1" directional="true" diffuse="0.45 0.45 0.45"/>
+
+    <!-- 地面 -->
+    <geom name="floor" size="3 3 0.05" type="plane" material="ground_mat"/>
+
+    <!-- 工业实验工作台 (Table) -->
+    <!-- 桌面中心在 (0.5, 0, 0.25), 桌面顶面高度 Z = 0.50m -->
+    <body name="worktable" pos="0.5 0 0.25">
+      <geom name="table_top" type="box" size="0.4 0.5 0.25" rgba="0.82 0.84 0.88 1.0" friction="0.8 0.02 0.001"/>
+    </body>
+
+    <!-- 目标落点放置区 (B位置 - 目标点，橙色标记区域) -->
+    <body name="target_zone" pos="0.5 -0.22 0.501">
+      <geom name="zone_marker" type="box" size="0.06 0.06 0.001" rgba="0.95 0.4 0.1 0.7" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- 待抓取工件正方体 (A位置 - 初始位置，青蓝色 50mm 标准立方体) -->
+    <!-- 方块半宽 0.025m (5cm 立方体)，放置在桌面 Z = 0.50 + 0.025 = 0.525m -->
+    <body name="workpiece_cube" pos="0.5 0.2 0.525">
+      <freejoint name="cube_joint"/>
+      <geom name="cube_geom" type="box" size="0.025 0.025 0.025" rgba="0.05 0.82 0.95 1.0" mass="0.08" friction="1.2 0.05 0.001" condim="6" solref="0.005 1"/>
+    </body>
+
+    <!-- 顶部俯视摄像头 (Eye-to-Hand 机器视觉相机) -->
+    <camera name="overhead_cam" pos="0.5 0 1.5" fovy="58" mode="fixed"/>
+
+    <!-- 侧方全局观察监控相机 -->
+    <camera name="surveillance_cam" pos="1.4 0.8 1.2" fovy="45" mode="targetbody" target="worktable"/>
+  </worldbody>
+
+  <!-- 初始关键帧姿态 (抬手待机姿势) -->
+  <keyframe>
+    <key name="ready"
+         qpos="0.0 -0.4 0.0 -2.2 0.0 1.8 0.785 0.04 0.04 0.5 0.2 0.525 1 0 0 0"
+         ctrl="0.0 -0.4 0.0 -2.2 0.0 1.8 0.785 0.04"/>
+  </keyframe>
+</mujoco>
