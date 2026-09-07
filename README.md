@@ -37,13 +37,17 @@ robot_arm_station/
 
 ---
 
-## 2. 快速开始与环境安装 (一键配置)
+## 2. 快速开始与环境安装
 
-### 步骤一：安装 Python 依赖
-推荐在独立的虚拟环境（Virtualenv / Conda）中运行：
+### 步骤一：创建独立 Python 虚拟环境并安装依赖
+推荐使用 Python 原生 `venv` 确保运行环境隔离：
 
 ```bash
-# 激活您的 Python 虚拟环境后执行
+# 1. 创建并激活独立虚拟环境
+python3 -m venv venv
+source venv/bin/activate
+
+# 2. 安装 Python 核心依赖清单
 pip install -r requirements.txt
 ```
 
@@ -60,6 +64,18 @@ sudo apt update && sudo apt install -y \
     gstreamer1.0-libav
 ```
 
+### 步骤三：编译数字孪生控制台 (Qt 6 Client)
+控制台支持通过标准 CMake 在命令行直接构建，亦可使用 Qt Creator 打开 `CMakeLists.txt` 构建运行：
+
+```bash
+# 安装 Qt 6 与 CMake 编译构建工具链 (如系统未安装)
+sudo apt install -y build-essential cmake qt6-base-dev qt6-declarative-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+# 编译客户端
+cmake -B qt_client/robot_console/build -S qt_client/robot_console -DCMAKE_BUILD_TYPE=Release
+cmake --build qt_client/robot_console/build -j$(nproc)
+```
+
 ---
 
 ## 3. 工作站运行指南
@@ -73,10 +89,10 @@ python service/robot_server.py
 > 说明：早期的 `camera_streamer.py` 仅为独立视讯测试脚本，现已全面废弃并合入 `robot_server.py`。统一运行 `robot_server.py` 即可完成物理仿真与视频推流。
 
 ### 2. 启动数字孪生上位机控制台 (Qt 6 Client)
-在另一个终端中启动已编译就绪的上位机界面：
+在另一个终端中启动编译就绪的上位机界面（或直接在 Qt Creator 中点击运行）：
 
 ```bash
-./qt_client/robot_console/build/Desktop_Qt_6_11_2_Debug/approbot_console
+./qt_client/robot_console/build/approbot_console
 ```
 上位机启动后将自动建立双向遥测信道，并在左侧视口秒级挂载低延迟推流画面。
 
@@ -87,9 +103,9 @@ python service/robot_server.py
 整个自主搬运任务由高可靠性有限状态机（FSM）驱动，包含以下 5 个关键阶段：
 
 1. **视觉感知与位姿解算 (Vision Acquisition)**:
-   - 顶部俯视相机（`overhead_cam`）捕获图像，由 [`BlockDetector`](file:///home/yellowtown/Code/mhs_multimedia_agent/src/robot_arm_station/perception/block_detector.py) 提取工件亚像素中心，基于小孔逆投影模型与手眼外参，毫米级输出工件在机械臂基坐标系下的三维物理坐标 $(X, Y, Z)$；
+   - 顶部俯视相机（`overhead_cam`）捕获图像，由 [`BlockDetector`](perception/block_detector.py) 提取工件亚像素中心，基于小孔逆投影模型与手眼外参，毫米级输出工件在机械臂基坐标系下的三维物理坐标 $(X, Y, Z)$；
 2. **预抓取逼近 (Approach)**:
-   - 由 [`TrajectoryPlanner`](file:///home/yellowtown/Code/mhs_multimedia_agent/src/robot_arm_station/kinematics/trajectory.py) 规划门字形高空安全巡航航路点（$Z = 0.720\text{ m}$），机械臂高空对齐工件正上方后，沿负 Z 轴严格直线垂直下潜至抓取深度（$Z = 0.584\text{ m}$），杜绝任何水平撞击；
+   - 由 [`TrajectoryPlanner`](kinematics/trajectory.py) 规划门字形高空安全巡航航路点（$Z = 0.720\text{ m}$），机械臂高空对齐工件正上方后，沿负 Z 轴严格直线垂直下潜至抓取深度（$Z = 0.584\text{ m}$），杜绝任何水平撞击；
 3. **闭环抓取 (Grasp)**:
    - 夹爪以高刚度闭合咬合工件，依靠真实物理刚体摩擦产生牢固抓持力；
 4. **提升与高空运送 (Lift & Transit)**:
